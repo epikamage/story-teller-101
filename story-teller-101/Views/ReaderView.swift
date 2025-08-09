@@ -22,7 +22,8 @@ struct ReaderView: View {
                         TTSService.shared.pause()
                         isSpeaking = false
                     } else {
-                        TTSService.shared.speak(text: chapter.text, voiceId: nil, rate: rate, pitch: pitch)
+                        // If user selected a preferred voice (e.g., Personal Voice), it will be used
+                        TTSService.shared.speak(text: chapter.text, voiceId: TTSService.shared.preferredVoiceIdentifier, rate: rate, pitch: pitch)
                         isSpeaking = true
                     }
                 } label: {

@@ -41,6 +41,11 @@ struct LibraryView: View {
                         Label("Import", systemImage: "square.and.arrow.down")
                     }
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink(destination: SettingsView()) {
+                        Image(systemName: "gear")
+                    }
+                }
             }
             .fileImporter(
                 isPresented: $isImporterPresented,

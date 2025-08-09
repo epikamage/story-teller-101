@@ -7,6 +7,7 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
     
     private let synthesizer = AVSpeechSynthesizer()
     private(set) var isSpeaking: Bool = false
+    private let preferredVoiceIdKey = "preferredVoiceIdentifier"
     
     override init() {
         super.init()
@@ -18,7 +19,8 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = rate
         utterance.pitchMultiplier = pitch
-        if let voiceId = voiceId, let voice = AVSpeechSynthesisVoice(identifier: voiceId) {
+        let resolvedVoiceId = voiceId ?? preferredVoiceIdentifier
+        if let resolvedVoiceId, let voice = AVSpeechSynthesisVoice(identifier: resolvedVoiceId) {
             utterance.voice = voice
         }
         synthesizer.speak(utterance)
@@ -34,6 +36,22 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
     
     func continueSpeaking() {
         synthesizer.continueSpeaking()
+    }
+    
+    // MARK: - Personal Voice & Preferences
+    var preferredVoiceIdentifier: String? {
+        get { UserDefaults.standard.string(forKey: preferredVoiceIdKey) }
+        set { UserDefaults.standard.setValue(newValue, forKey: preferredVoiceIdKey) }
+    }
+    
+    nonisolated static func requestPersonalVoiceAuthorization(completion: @escaping (AVSpeechSynthesizer.PersonalVoiceAuthorizationStatus) -> Void) {
+        AVSpeechSynthesizer.requestPersonalVoiceAuthorization { status in
+            completion(status)
+        }
+    }
+    
+    nonisolated static func personalVoices() -> [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices().filter { $0.voiceTraits.contains(.isPersonalVoice) }
     }
     
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
