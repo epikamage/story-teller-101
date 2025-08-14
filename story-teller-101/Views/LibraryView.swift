@@ -9,6 +9,9 @@ struct LibraryView: View {
     @State private var isImporterPresented: Bool = false
     @State private var isProcessingImport: Bool = false
     @State private var importErrorMessage: String?
+    @State private var importSuccessMessage: String?
+    @State private var bookToDelete: Book?
+    @State private var showDeleteBookAlert = false
     
     var body: some View {
         NavigationStack {
@@ -27,8 +30,21 @@ struct LibraryView: View {
                                     Text("\(book.chapters.count) chapters").font(.footnote).foregroundStyle(.secondary)
                                 }
                             }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    bookToDelete = book
+                                    showDeleteBookAlert = true
+                                } label: {
+                                    Label("Delete Book", systemImage: "trash")
+                                }
+                            }
                         }
-                        .onDelete(perform: deleteBooks)
+                        .onDelete(perform: { offsets in
+                            if let index = offsets.first {
+                                bookToDelete = books[index]
+                                showDeleteBookAlert = true
+                            }
+                        })
                     }
                 }
             }
@@ -67,10 +83,32 @@ struct LibraryView: View {
                 if let message = importErrorMessage {
                     Text(message)
                         .font(.footnote)
+                        .foregroundColor(.red)
                         .padding(8)
                         .background(.thinMaterial, in: Capsule())
                         .padding()
                         .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { importErrorMessage = nil } }
+                }
+                if let message = importSuccessMessage {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundColor(.green)
+                        .padding(8)
+                        .background(.thinMaterial, in: Capsule())
+                        .padding()
+                        .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { importSuccessMessage = nil } }
+                }
+            }
+            .alert("Delete Book", isPresented: $showDeleteBookAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    if let book = bookToDelete {
+                        deleteBook(book)
+                    }
+                }
+            } message: {
+                if let book = bookToDelete {
+                    Text("Are you sure you want to delete '\(book.title)'? This will also delete all \(book.chapters.count) chapters. This action cannot be undone.")
                 }
             }
         }
@@ -79,6 +117,20 @@ struct LibraryView: View {
     private func deleteBooks(at offsets: IndexSet) {
         for index in offsets { modelContext.delete(books[index]) }
         try? modelContext.save()
+    }
+    
+    private func deleteBook(_ book: Book) {
+        // Delete the book (chapters will be automatically deleted due to cascade rule)
+        modelContext.delete(book)
+        
+        // Save changes
+        try? modelContext.save()
+        
+        // Show success message
+        importSuccessMessage = "Book '\(book.title)' deleted successfully"
+        
+        // Reset the book to delete
+        bookToDelete = nil
     }
     
     private func handleImport(url: URL) async {
@@ -90,20 +142,41 @@ struct LibraryView: View {
             let ext = url.pathExtension.lowercased()
             let fileName = url.deletingPathExtension().lastPathComponent
             var text: String = ""
+            var filteredPages: Int = 0
+            
             if ext == "pdf" {
-                text = try PDFParser.extractDocumentText(from: url)
+                // Use enhanced PDF parsing for better content analysis
+                let (fullText, pages) = try PDFParser.extractDocumentTextWithPages(from: url)
+                text = fullText
+                
+                // Count pages that were identified as index/glossary
+                filteredPages = pages.filter { $0.isLikelyIndex || $0.isLikelyGlossary }.count
             } else {
                 text = (try? String(contentsOf: url)) ?? ""
             }
-            guard text.isEmpty == false else { throw NSError(domain: "Import", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to read file content"]) }
+            
+            guard text.isEmpty == false else { 
+                throw NSError(domain: "Import", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to read file content"]) 
+            }
+            
             let pieces = Chapterizer.splitIntoChapters(from: text)
             let book = Book(title: fileName, sourceType: ext == "pdf" ? "pdf" : "text")
             modelContext.insert(book)
+            
             for (index, piece) in pieces.enumerated() {
                 let chapter = Chapter(index: index, title: piece.title, text: piece.body, book: book)
                 book.chapters.append(chapter)
             }
+            
             try modelContext.save()
+            
+            // Show success message with filtering info
+            if ext == "pdf" && filteredPages > 0 {
+                importSuccessMessage = "Imported successfully! Filtered out \(filteredPages) index/glossary pages. Created \(pieces.count) chapters."
+            } else {
+                importSuccessMessage = "Imported successfully! Created \(pieces.count) chapters."
+            }
+            
         } catch {
             importErrorMessage = error.localizedDescription
         }

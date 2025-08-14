@@ -5,7 +5,7 @@ Fast, private, on-device reader for text, images, and PDFs. Imports documents, p
 ### Features
 - **Import**: Files app, Share Sheet, Camera (OCR), Photos, Clipboard. Types: `.txt`, `.rtf` (plain text), `.pdf`, `.jpg/.png`.
 - **Parsing & OCR**: PDFKit text extraction; Vision on-device OCR fallback for scanned pages and images.
-- **Chapterization**: Heuristics for headings (Chapter/Prologue/Epilogue, roman numerals), spacing/size cues when available, and a fallback fixed-window splitter.
+- **Chapterization**: Smart heuristics for headings (Chapter/Prologue/Epilogue, roman numerals, Parts/Sections/Acts/Scenes), with intelligent filtering of index, glossary, bibliography, and other non-chapter content. Fallback fixed-window splitter for unstructured documents.
 - **Library**: SwiftData-backed `Book`/`Chapter` models; thumbnails planned; quick browse and search (search UI WIP).
 - **Reader UI**: SwiftUI with scalable type, themes (light/dark/sepia WIP), adjustable line height/margins (WIP), chapter list with progress.
 - **Text-to-Speech**: AVSpeechSynthesizer on-device; adjustable rate and pitch; per-character voice mapping scaffolded (profile UI WIP); background audio planned.
@@ -16,7 +16,7 @@ Fast, private, on-device reader for text, images, and PDFs. Imports documents, p
 - **Target**: iOS 17+
 - **UI**: SwiftUI, NavigationStack
 - **Data**: SwiftData models `Book`, `Chapter`, `VoiceProfile`, `ImportAsset`
-- **Import**: PDFKit, UIDocumentPicker, Share Extension (planned), PhotosUI, VisionKit (camera OCR planned)
+- **Import**: PDFKit with enhanced page-level analysis for index/glossary detection, UIDocumentPicker, Share Extension (planned), PhotosUI, VisionKit (camera OCR planned)
 - **OCR/ML**: Vision `VNRecognizeTextRequest`; NaturalLanguage (language ID/tokenization planned)
 - **Audio**: AVSpeechSynthesizer, AVAudioSession; MPNowPlayingInfoCenter (planned)
 - **Background**: BGProcessingTask for long OCR (planned)
