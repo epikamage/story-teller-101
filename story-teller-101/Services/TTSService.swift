@@ -11,8 +11,10 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
     private(set) var isSpeaking: Bool = false
     private let preferredVoiceIdKey = "preferredVoiceIdentifier"
     
-    // Pause durations in seconds
-    private let commaPause: TimeInterval = 0.3
+    // Constants for pause durations
+    private let commaPause: TimeInterval = 0.15  // Reduced from 0.3
+    private let colonSemicolonPause: TimeInterval = 0.25  // New: for colons and semicolons
+    private let hyphenDashPause: TimeInterval = 0.2  // New: for hyphens and dashes
     private let sentencePause: TimeInterval = 0.6
     private let paragraphPause: TimeInterval = 1.0
     
@@ -23,6 +25,7 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
     // Queue for managing speech chunks
     private var speechQueue: [AVSpeechUtterance] = []
     private var currentUtterance: AVSpeechUtterance?
+    private var spokenUtteranceIds: Set<ObjectIdentifier> = []
     
     override init() {
         super.init()
@@ -49,6 +52,12 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
                 adjustedRate *= sentenceRateMultiplier
             case .paragraph, .regular:
                 adjustedRate = rate
+            case .colonSemicolon:
+                adjustedRate = rate
+            case .hyphenDash:
+                adjustedRate = rate
+            case .none:
+                adjustedRate = rate
             }
             
             utterance.rate = adjustedRate
@@ -69,10 +78,10 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
             return utterance
         }
         
-        // Start speaking the first utterance
+        // Start speaking the first utterance only if we have chunks
         if let firstUtterance = speechQueue.first {
-            currentUtterance = firstUtterance
-            synthesizer.speak(firstUtterance)
+            isSpeaking = true
+            safelySpeak(firstUtterance)
         }
     }
     
@@ -81,14 +90,33 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
         speechQueue.removeAll()
         currentUtterance = nil
         isSpeaking = false
+        spokenUtteranceIds.removeAll()
     }
     
     func pause() {
         synthesizer.pauseSpeaking(at: .immediate)
+        isSpeaking = false
     }
     
-    func continueSpeaking() {
-        synthesizer.continueSpeaking()
+    func resume() {
+        if currentUtterance != nil {
+            synthesizer.continueSpeaking()
+            isSpeaking = true
+        }
+    }
+    
+    func updateRate(_ newRate: Float) {
+        // Update rate for current and remaining utterances
+        for utterance in speechQueue {
+            utterance.rate = newRate
+        }
+    }
+    
+    func updatePitch(_ newPitch: Float) {
+        // Update pitch for current and remaining utterances
+        for utterance in speechQueue {
+            utterance.pitchMultiplier = newPitch
+        }
     }
     
     func skipToNextChunk() {
@@ -103,8 +131,7 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
         
         // Start with next utterance
         let nextUtterance = speechQueue[currentIndex + 1]
-        currentUtterance = nextUtterance
-        synthesizer.speak(nextUtterance)
+        safelySpeak(nextUtterance)
     }
     
     func skipToPreviousChunk() {
@@ -119,8 +146,7 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
         
         // Start with previous utterance
         let previousUtterance = speechQueue[currentIndex - 1]
-        currentUtterance = previousUtterance
-        synthesizer.speak(previousUtterance)
+        safelySpeak(previousUtterance)
     }
     
     func skipToChunk(at index: Int) {
@@ -131,8 +157,17 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
         
         // Start with specified utterance
         let targetUtterance = speechQueue[index]
-        currentUtterance = targetUtterance
-        synthesizer.speak(targetUtterance)
+        safelySpeak(targetUtterance)
+    }
+    
+    private func safelySpeak(_ utterance: AVSpeechUtterance) {
+        // Check if this utterance has already been spoken
+        let utteranceId = ObjectIdentifier(utterance)
+        if !spokenUtteranceIds.contains(utteranceId) && !synthesizer.isSpeaking {
+            currentUtterance = utterance
+            spokenUtteranceIds.insert(utteranceId)
+            synthesizer.speak(utterance)
+        }
     }
     
     // MARK: - Progress and State
@@ -216,14 +251,14 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
                 speechQueue.remove(at: index)
             }
             
-            // Speak the next utterance if available
-            if let nextUtterance = speechQueue.first {
-                currentUtterance = nextUtterance
-                synthesizer.speak(nextUtterance)
-            } else {
+            // Only speak the next utterance if we're still supposed to be speaking
+            if isSpeaking, let nextUtterance = speechQueue.first {
+                safelySpeak(nextUtterance)
+            } else if speechQueue.isEmpty {
                 // All utterances finished
                 isSpeaking = false
                 currentUtterance = nil
+                spokenUtteranceIds.removeAll()
             }
         }
     }
@@ -233,6 +268,7 @@ final class TTSService: NSObject, AVSpeechSynthesizerDelegate {
             speechQueue.removeAll()
             isSpeaking = false
             currentUtterance = nil
+            spokenUtteranceIds.removeAll()
         }
     }
 }
@@ -251,6 +287,9 @@ struct TextSegmenter {
         case sentence
         case paragraph
         case regular
+        case colonSemicolon
+        case hyphenDash
+        case none
     }
     
     static func segmentText(_ text: String) -> [SpeechChunk] {
@@ -266,24 +305,46 @@ struct TextSegmenter {
         for sentenceRange in sentenceRanges {
             let sentence = String(text[sentenceRange])
             
-            // Split sentence by commas and other punctuation
-            let commaChunks = splitSentenceByPunctuation(sentence)
+            // Split sentence by punctuation
+            let punctuationChunks = splitSentenceByPunctuation(sentence)
             
-            for (index, commaChunk) in commaChunks.enumerated() {
-                let isLastInSentence = index == commaChunks.count - 1
-                let isLastInParagraph = sentenceRange.upperBound == text.endIndex || 
+            for (index, chunk) in punctuationChunks.enumerated() {
+                let isLastInSentence = index == punctuationChunks.count - 1
+                
+                // Check if this is actually a paragraph break (multiple newlines or significant spacing)
+                let isLastInParagraph = isLastInSentence && (
+                    sentenceRange.upperBound == text.endIndex || 
                     (sentenceRange.upperBound < text.endIndex && 
-                     text[sentenceRange.upperBound].isNewline)
+                     text[sentenceRange.upperBound...].prefix(3).allSatisfy { $0.isNewline || $0.isWhitespace })
+                )
                 
                 let chunkType: ChunkType
                 let pauseDuration: TimeInterval
                 
                 if !isLastInSentence {
-                    // Add comma pause
-                    chunkType = .comma
-                    pauseDuration = 0.3
+                    // Determine pause type based on the punctuation that follows
+                    let nextChunk = punctuationChunks[index + 1]
+                    let punctuationType = getPunctuationType(for: nextChunk)
+                    
+                    switch punctuationType {
+                    case .comma:
+                        chunkType = .comma
+                        pauseDuration = 0.15
+                    case .colonSemicolon:
+                        chunkType = .colonSemicolon
+                        pauseDuration = 0.25
+                    case .hyphenDash:
+                        chunkType = .hyphenDash
+                        pauseDuration = 0.2
+                    case .none:
+                        chunkType = .regular
+                        pauseDuration = 0.0
+                    case .sentence, .paragraph, .regular:
+                        chunkType = .regular
+                        pauseDuration = 0.0
+                    }
                 } else if isLastInParagraph {
-                    // Add paragraph pause
+                    // Add paragraph pause only for actual paragraph breaks
                     chunkType = .paragraph
                     pauseDuration = 1.0
                 } else {
@@ -293,39 +354,34 @@ struct TextSegmenter {
                 }
                 
                 chunks.append(SpeechChunk(
-                    text: commaChunk.trimmingCharacters(in: .whitespaces),
+                    text: chunk.trimmingCharacters(in: .whitespaces),
                     pauseDuration: pauseDuration,
                     type: chunkType
                 ))
             }
         }
         
-        return chunks.filter { !$0.text.isEmpty }
+        return chunks
     }
     
     private static func splitSentenceByPunctuation(_ sentence: String) -> [String] {
-        var chunks: [String] = []
+        var result: [String] = []
         var currentChunk = ""
         var parenthesesDepth = 0
-        var bracketDepth = 0
         var quoteDepth = 0
         
         for char in sentence {
-            // Track nested structures
-            switch char {
-            case "(": parenthesesDepth += 1
-            case ")": parenthesesDepth -= 1
-            case "[": bracketDepth += 1
-            case "]": bracketDepth -= 1
-            case "\"": quoteDepth += 1
-            case "'": quoteDepth += 1
-            default: break
-            }
+            if char == "(" { parenthesesDepth += 1 }
+            if char == ")" { parenthesesDepth -= 1 }
+            if char == "\"" { quoteDepth += 1 }
+            if char == "'" { quoteDepth += 1 }
             
-            // Only split on punctuation when not inside nested structures
-            if (char == "," || char == ";" || char == ":") && 
-               parenthesesDepth == 0 && bracketDepth == 0 && quoteDepth % 2 == 0 {
-                chunks.append(currentChunk)
+            // Split on commas, semicolons, colons, hyphens, and dashes if we're not inside parentheses or quotes
+            if (char == "," || char == ";" || char == ":" || char == "-" || char == "—" || char == "–") && 
+               parenthesesDepth == 0 && quoteDepth % 2 == 0 {
+                if !currentChunk.trimmingCharacters(in: .whitespaces).isEmpty {
+                    result.append(currentChunk.trimmingCharacters(in: .whitespaces))
+                }
                 currentChunk = ""
             } else {
                 currentChunk.append(char)
@@ -333,11 +389,20 @@ struct TextSegmenter {
         }
         
         // Add the last chunk
-        if !currentChunk.isEmpty {
-            chunks.append(currentChunk)
+        if !currentChunk.trimmingCharacters(in: .whitespaces).isEmpty {
+            result.append(currentChunk.trimmingCharacters(in: .whitespaces))
         }
         
-        return chunks
+        return result.isEmpty ? [sentence] : result
+    }
+    
+    private static func getPunctuationType(for text: String) -> ChunkType {
+        if text.hasSuffix(",") { return .comma }
+        if text.hasSuffix(";") { return .colonSemicolon }
+        if text.hasSuffix("-") { return .hyphenDash }
+        if text.hasSuffix("—") { return .hyphenDash } // Em dash
+        if text.hasSuffix("–") { return .hyphenDash } // En dash
+        return .none
     }
 }
 

@@ -2,161 +2,151 @@ import SwiftUI
 import AVFoundation
 
 struct ReaderView: View {
+    let chapter: Chapter
     @State private var rate: Float = 0.5
     @State private var pitch: Float = 1.0
     @State private var isSpeaking: Bool = false
     
-    let chapter: Chapter
-    
     var body: some View {
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if isSpeaking {
-                            // Show chunked text with highlighting
-                            ChunkedTextView(text: chapter.text, currentChunkIndex: TTSService.shared.currentChunkIndex)
-                        } else {
-                            // Show regular text
-                            Text(chapter.text)
-                                .font(.system(.body, design: .default))
-                        }
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .onChange(of: TTSService.shared.currentChunkIndex) { newIndex in
-                    if isSpeaking {
-                        withAnimation(.easeInOut(duration: 0.5)) {
-                            proxy.scrollTo(newIndex, anchor: .center)
-                        }
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(chapter.text)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            
             Divider()
             
-            // Enhanced TTS Controls
-            VStack(spacing: 12) {
-                // Progress and Current Chunk Info
-                if isSpeaking {
+            // TTS Controls
+            VStack(spacing: 16) {
+                // Progress and Chunk Info
+                if TTSService.shared.isSpeaking {
                     VStack(spacing: 8) {
                         ProgressView(value: TTSService.shared.speakingProgress)
-                            .progressViewStyle(.linear)
+                            .progressViewStyle(LinearProgressViewStyle())
                         
                         HStack {
                             Text("Chunk \(TTSService.shared.currentChunkIndex + 1) of \(TTSService.shared.totalChunks)")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                             
                             Spacer()
                             
                             if let currentText = TTSService.shared.currentChunkText {
-                                Text(currentText.prefix(50) + (currentText.count > 50 ? "..." : ""))
+                                Text("\(currentText.prefix(50))...")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundColor(.secondary)
                                     .lineLimit(1)
                             }
                         }
                         
-                        // Pause duration info
                         if TTSService.shared.currentChunkIndex < TTSService.shared.totalChunks - 1 {
-                            let chunks = TextSegmenter.segmentText(chapter.text)
-                            let currentChunk = chunks[TTSService.shared.currentChunkIndex]
+                            let nextChunk = TextSegmenter.segmentText(chapter.text)[TTSService.shared.currentChunkIndex + 1]
                             HStack {
-                                Text("Next pause: \(String(format: "%.1f", currentChunk.pauseDuration))s")
+                                Text("Next: \(chunkTypeDescription(nextChunk.type))")
                                     .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundColor(.secondary)
                                 
                                 Spacer()
                                 
-                                Text("Type: \(chunkTypeDescription(currentChunk.type))")
+                                Text("Pause: \(String(format: "%.1fs", nextChunk.pauseDuration))")
                                     .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundColor(.secondary)
                             }
                         }
                         
-                        // Time estimates
                         HStack {
                             Text("Total: \(formatTime(TTSService.shared.estimatedSpeakingTime))")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                             
                             Spacer()
                             
                             Text("Remaining: \(formatTime(TTSService.shared.estimatedRemainingTime))")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                         }
                     }
                     .padding(.horizontal)
                 }
                 
-                // Main Controls
-                HStack(spacing: 16) {
-                    // Previous Chunk
-                    Button {
+                // Navigation Controls
+                HStack(spacing: 20) {
+                    Button(action: {
                         TTSService.shared.skipToPreviousChunk()
-                    } label: {
+                    }) {
                         Image(systemName: "backward.fill")
-                            .font(.system(size: 20))
+                            .font(.title2)
                     }
-                    .disabled(!isSpeaking || TTSService.shared.currentChunkIndex <= 0)
+                    .disabled(!TTSService.shared.isSpeaking || TTSService.shared.currentChunkIndex <= 0)
                     
-                    // Play/Pause
-                    Button {
-                        if isSpeaking {
+                    Button(action: {
+                        if TTSService.shared.isSpeaking {
                             TTSService.shared.pause()
-                            isSpeaking = false
                         } else {
+                            // Start speaking from the beginning if not already speaking
                             TTSService.shared.speak(text: chapter.text, voiceId: TTSService.shared.preferredVoiceIdentifier, rate: rate, pitch: pitch)
-                            isSpeaking = true
                         }
-                    } label: {
-                        Image(systemName: isSpeaking ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 32))
+                    }) {
+                        Image(systemName: TTSService.shared.isSpeaking ? "pause.fill" : "play.fill")
+                            .font(.title)
                     }
                     
-                    // Stop
-                    Button {
-                        TTSService.shared.stop()
-                        isSpeaking = false
-                    } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 20))
-                    }
-                    
-                    // Next Chunk
-                    Button {
+                    Button(action: {
                         TTSService.shared.skipToNextChunk()
-                    } label: {
+                    }) {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 20))
+                            .font(.title2)
                     }
-                    .disabled(!isSpeaking || TTSService.shared.currentChunkIndex >= TTSService.shared.totalChunks - 1)
-                    
-                    Spacer()
+                    .disabled(!TTSService.shared.isSpeaking || TTSService.shared.currentChunkIndex >= TTSService.shared.totalChunks - 1)
                 }
                 
-                // Settings Controls
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading) {
-                        Text("Rate: \(String(format: "%.2f", rate))").font(.caption)
-                        Slider(value: Binding(get: { Double(rate) }, set: { rate = Float($0) }), in: 0.3...0.6)
-                    }
-                    
-                    VStack(alignment: .leading) {
-                        Text("Pitch: \(String(format: "%.2f", pitch))").font(.caption)
-                        Slider(value: Binding(get: { Double(pitch) }, set: { pitch = Float($0) }), in: 0.5...2.0)
-                    }
-                    
-                    Spacer()
+                // Stop Button
+                Button(action: {
+                    TTSService.shared.stop()
+                }) {
+                    Image(systemName: "stop.fill")
+                        .font(.title2)
+                        .foregroundColor(.red)
                 }
+                
+                // Rate and Pitch Controls
+                VStack(spacing: 12) {
+                    HStack {
+                        Text("Rate")
+                        Slider(value: $rate, in: 0.1...1.0, step: 0.1)
+                        Text("\(String(format: "%.1f", rate))")
+                    }
+                    
+                    HStack {
+                        Text("Pitch")
+                        Slider(value: $pitch, in: 0.5...2.0, step: 0.1)
+                        Text("\(String(format: "%.1f", pitch))")
+                    }
+                }
+                .padding(.horizontal)
             }
             .padding()
-            .background(.thinMaterial)
         }
         .navigationTitle(chapter.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            isSpeaking = TTSService.shared.isSpeaking
+        }
+        .onChange(of: TTSService.shared.isSpeaking) { newValue in
+            isSpeaking = newValue
+        }
+        .onChange(of: rate) { newRate in
+            if TTSService.shared.isSpeaking {
+                TTSService.shared.updateRate(newRate)
+            }
+        }
+        .onChange(of: pitch) { newPitch in
+            if TTSService.shared.isSpeaking {
+                TTSService.shared.updatePitch(newPitch)
+            }
+        }
     }
     
     private func chunkTypeDescription(_ type: TextSegmenter.ChunkType) -> String {
@@ -165,46 +155,16 @@ struct ReaderView: View {
         case .sentence: return "Sentence"
         case .paragraph: return "Paragraph"
         case .regular: return "Regular"
+        case .colonSemicolon: return "Colon/Semicolon"
+        case .hyphenDash: return "Hyphen/Dash"
+        case .none: return "None"
         }
     }
     
     private func formatTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
-        
-        if minutes > 0 {
-            return "\(minutes)m \(seconds)s"
-        } else {
-            return "\(seconds)s"
-        }
-    }
-}
-
-// MARK: - Chunked Text View
-struct ChunkedTextView: View {
-    let text: String
-    let currentChunkIndex: Int
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            let chunks = TextSegmenter.segmentText(text)
-            
-            ForEach(Array(chunks.enumerated()), id: \.offset) { index, chunk in
-                Text(chunk.text)
-                    .font(.system(.body, design: .default))
-                    .padding(.vertical, 2)
-                    .padding(.horizontal, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(index == currentChunkIndex ? Color.blue.opacity(0.2) : Color.clear)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(index == currentChunkIndex ? Color.blue : Color.clear, lineWidth: 1)
-                    )
-                    .id(index) // For scrolling
-            }
-        }
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 
